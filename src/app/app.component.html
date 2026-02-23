@@ -1,0 +1,617 @@
+<div class="app-shell">
+  <header class="topbar">
+    <div class="brand">
+      <div class="logo">EH</div>
+      <div class="brand-meta">
+        <p class="brand-title">Electra Hub Simulator</p>
+        <p class="brand-subtitle">Production-grade charger fleet digital twin</p>
+      </div>
+    </div>
+    <div class="topbar-actions">
+      <div class="field">
+        <label>API Base URL</label>
+        <input type="text" [formControl]="baseUrlControl" placeholder="http://localhost:8081" />
+      </div>
+      <button class="btn primary" type="button" (click)="applyBaseUrl()">Apply</button>
+      <button class="btn ghost" type="button" (click)="fetchStats()">Refresh Stats</button>
+      <button class="btn ghost" type="button" (click)="listChargerFleet()">Refresh Fleet</button>
+      <span class="pill" [class.on]="eventStreamConnected()">
+        Events {{ eventStreamConnected() ? 'Live' : 'Idle' }}
+      </span>
+    </div>
+  </header>
+
+  <section class="stats">
+    <div class="stat-card">
+      <p>Total Chargers</p>
+      <h3>{{ stats()?.chargersTotal ?? 0 }}</h3>
+    </div>
+    <div class="stat-card">
+      <p>Connected</p>
+      <h3>{{ stats()?.connected ?? 0 }}</h3>
+    </div>
+    <div class="stat-card">
+      <p>Connecting</p>
+      <h3>{{ stats()?.connecting ?? 0 }}</h3>
+    </div>
+    <div class="stat-card">
+      <p>Disconnected</p>
+      <h3>{{ stats()?.disconnected ?? 0 }}</h3>
+    </div>
+    <div class="stat-card">
+      <p>Msg Rate In</p>
+      <h3>{{ stats()?.msgRateInPerSec ?? 0 }}/s</h3>
+    </div>
+    <div class="stat-card">
+      <p>Msg Rate Out</p>
+      <h3>{{ stats()?.msgRateOutPerSec ?? 0 }}/s</h3>
+    </div>
+  </section>
+
+  <section class="banner" *ngIf="error()">
+    <p>{{ error() }}</p>
+  </section>
+
+  <div class="grid">
+    <section class="panel">
+      <header>
+        <div>
+          <h2>Charger Fleet</h2>
+          <p>Create and manage chargers at scale.</p>
+        </div>
+        <button class="btn ghost" type="button" (click)="addConnector()">Add Connector</button>
+      </header>
+
+      <details open class="accordion">
+        <summary>Provision Charger</summary>
+        <form class="form" [formGroup]="createForm" (ngSubmit)="createCharger()">
+          <div class="row">
+            <div class="field">
+              <label>Charger ID</label>
+              <input formControlName="chargerId" type="text" />
+            </div>
+            <div class="field">
+              <label>OCPP Identity</label>
+              <input formControlName="ocppIdentity" type="text" />
+            </div>
+            <div class="field">
+              <label>OCPP Version</label>
+              <select formControlName="ocppVersion">
+                <option value="OCPP16J">OCPP 1.6J</option>
+                <option value="OCPP201">OCPP 2.0.1</option>
+              </select>
+            </div>
+          </div>
+
+          <div class="row" formGroupName="transport">
+            <div class="field">
+              <label>Role</label>
+              <select formControlName="role">
+                <option value="CP">Charge Point</option>
+                <option value="CSMS">CSMS</option>
+              </select>
+            </div>
+            <div class="field span-2">
+              <label>CSMS URL</label>
+              <input formControlName="csmsUrl" type="text" />
+            </div>
+            <div class="field inline" formGroupName="tls">
+              <label>TLS</label>
+              <div class="toggle-group">
+                <div class="toggle">
+                  <input id="tlsEnabled" formControlName="enabled" type="checkbox" />
+                  <label for="tlsEnabled">Enabled</label>
+                </div>
+                <div class="toggle">
+                  <input id="tlsSkip" formControlName="skipVerify" type="checkbox" />
+                  <label for="tlsSkip">Skip Verify</label>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="stack" formArrayName="connectors">
+            <h4>Connectors</h4>
+            <div
+              class="row"
+              *ngFor="let connector of connectors.controls; let i = index"
+              [formGroupName]="i"
+            >
+              <div class="field">
+                <label>ID</label>
+                <input formControlName="connectorId" type="number" />
+              </div>
+              <div class="field">
+                <label>Type</label>
+                <input formControlName="type" type="text" />
+              </div>
+              <div class="field">
+                <label>Max kW</label>
+                <input formControlName="maxKw" type="number" />
+              </div>
+              <button class="btn ghost" type="button" (click)="removeConnector(i)">Remove</button>
+            </div>
+          </div>
+
+          <div class="stack" formGroupName="config">
+            <h4>Telemetry</h4>
+            <div class="row">
+              <div class="field">
+                <label>Heartbeat (sec)</label>
+                <input formControlName="heartbeatIntervalSec" type="number" />
+              </div>
+              <div class="field">
+                <label>Meter Values (sec)</label>
+                <input formControlName="meterValuesIntervalSec" type="number" />
+              </div>
+            </div>
+            <div class="row" formGroupName="soc">
+              <div class="field">
+                <label>SoC Start %</label>
+                <input formControlName="startPercent" type="number" />
+              </div>
+              <div class="field">
+                <label>SoC End %</label>
+                <input formControlName="endPercent" type="number" />
+              </div>
+              <div class="field">
+                <label>Rate %/min</label>
+                <input formControlName="ratePercentPerMin" type="number" step="0.1" />
+              </div>
+            </div>
+          </div>
+
+          <div class="row" formGroupName="tags">
+            <div class="field">
+              <label>Site</label>
+              <input formControlName="site" type="text" />
+            </div>
+            <div class="field">
+              <label>Shard</label>
+              <input formControlName="shard" type="text" />
+            </div>
+          </div>
+
+          <button class="btn primary" type="submit">Create Charger</button>
+        </form>
+      </details>
+
+      <details open class="accordion">
+        <summary>Fleet List</summary>
+        <form class="row filter-row" [formGroup]="listFilters">
+          <div class="field">
+            <label>Status</label>
+            <input formControlName="status" type="text" placeholder="CONNECTED" />
+          </div>
+          <div class="field">
+            <label>OCPP Version</label>
+            <input formControlName="ocppVersion" type="text" placeholder="OCPP201" />
+          </div>
+          <div class="field">
+            <label>Limit</label>
+            <input formControlName="limit" type="number" />
+          </div>
+          <div class="field">
+            <label>Cursor</label>
+            <input formControlName="cursor" type="text" />
+          </div>
+          <button class="btn ghost" type="button" (click)="listChargerFleet()">Apply Filters</button>
+        </form>
+        <div class="table">
+          <div class="table-head">
+            <span>ID</span>
+            <span>Identity</span>
+            <span>Version</span>
+            <span>State</span>
+            <span>Tx</span>
+            <span>Actions</span>
+          </div>
+          <div
+            class="table-row"
+            *ngFor="let charger of chargers()"
+            [class.selected]="charger.chargerId === selectedChargerId()"
+          >
+            <button class="link" type="button" (click)="selectCharger(charger.chargerId)">
+              {{ charger.chargerId }}
+            </button>
+            <span>{{ charger.ocppIdentity ?? '-' }}</span>
+            <span>{{ charger.ocppVersion }}</span>
+            <span>{{ charger.connectionState }}</span>
+            <span>{{ charger.activeTransactions ?? 0 }}</span>
+            <div class="row actions">
+              <button class="btn ghost" type="button" (click)="deleteCharger(charger.chargerId)">
+                Delete
+              </button>
+              <button class="btn ghost" type="button" (click)="deleteCharger(charger.chargerId, true)">
+                Force
+              </button>
+            </div>
+          </div>
+        </div>
+      </details>
+    </section>
+
+    <section class="panel">
+      <header>
+        <div>
+          <h2>Charger Console</h2>
+          <p>Control connectivity, auth, charging, and telemetry.</p>
+        </div>
+        <div class="pill muted">
+          {{ selectedChargerId() ? selectedChargerId() : 'No charger selected' }}
+        </div>
+      </header>
+
+      <div class="stack">
+        <div class="summary-card" *ngIf="selectedCharger(); else emptyState">
+          <div class="summary">
+            <div>
+              <p>Connection</p>
+              <h4>{{ selectedCharger()?.connectionState }}</h4>
+            </div>
+            <div>
+              <p>Last Heartbeat</p>
+              <h4>{{ selectedCharger()?.runtime?.lastHeartbeatAt ?? '—' }}</h4>
+            </div>
+            <div>
+              <p>Last Message</p>
+              <h4>{{ selectedCharger()?.runtime?.lastMessageAt ?? '—' }}</h4>
+            </div>
+            <div>
+              <p>Active Tx</p>
+              <h4>{{ selectedCharger()?.runtime?.activeTransactions?.length ?? 0 }}</h4>
+            </div>
+            <div>
+              <p>Remote</p>
+              <h4>{{ selectedConnection()?.remote ?? '—' }}</h4>
+            </div>
+            <div>
+              <p>Connected Since</p>
+              <h4>{{ selectedConnection()?.since ?? '—' }}</h4>
+            </div>
+          </div>
+          <pre>{{ selectedCharger() | json }}</pre>
+        </div>
+        <ng-template #emptyState>
+          <div class="summary-card empty">
+            <h4>Select a charger to unlock controls.</h4>
+            <p>Choose a charger from the fleet list to view details and send commands.</p>
+          </div>
+        </ng-template>
+      </div>
+
+      <details class="accordion" open>
+        <summary>Connection Lifecycle</summary>
+        <div class="accordion-body">
+          <form class="row" [formGroup]="connectionForm">
+            <div class="field span-2">
+              <label>CSMS URL</label>
+              <input formControlName="csmsUrl" type="text" />
+            </div>
+            <div class="field">
+              <label>Reconnect</label>
+              <select formControlName="reconnectEnabled">
+                <option [ngValue]="true">Enabled</option>
+                <option [ngValue]="false">Disabled</option>
+              </select>
+            </div>
+            <div class="field">
+              <label>Min Backoff</label>
+              <input formControlName="minBackoffMs" type="number" />
+            </div>
+            <div class="field">
+              <label>Max Backoff</label>
+              <input formControlName="maxBackoffMs" type="number" />
+            </div>
+            <button class="btn primary" type="button" (click)="connectCharger()">Connect</button>
+          </form>
+          <form class="row" [formGroup]="disconnectForm">
+            <div class="field">
+              <label>Reason</label>
+              <input formControlName="reason" type="text" />
+            </div>
+            <div class="field">
+              <label>Close Code</label>
+              <input formControlName="closeCode" type="number" />
+            </div>
+            <button class="btn ghost" type="button" (click)="disconnectCharger()">Disconnect</button>
+            <button class="btn ghost" type="button" (click)="fetchConnection()">Check State</button>
+          </form>
+        </div>
+      </details>
+
+      <details class="accordion">
+        <summary>Configuration</summary>
+        <div class="accordion-body">
+          <form class="row" [formGroup]="configForm">
+            <div class="field">
+              <label>Heartbeat (sec)</label>
+              <input formControlName="heartbeatIntervalSec" type="number" />
+            </div>
+            <div class="field">
+              <label>Meter Values (sec)</label>
+              <input formControlName="meterValuesIntervalSec" type="number" />
+            </div>
+            <div class="field">
+              <label>SoC Start %</label>
+              <input formControlName="socStartPercent" type="number" />
+            </div>
+            <div class="field">
+              <label>SoC End %</label>
+              <input formControlName="socEndPercent" type="number" />
+            </div>
+            <button class="btn primary" type="button" (click)="patchConfig()">Update Config</button>
+          </form>
+        </div>
+      </details>
+
+      <details class="accordion">
+        <summary>Authorization & Plug and Charge</summary>
+        <div class="accordion-body">
+          <form class="row" [formGroup]="tapForm">
+            <div class="field">
+              <label>Connector</label>
+              <input formControlName="connectorId" type="number" />
+            </div>
+            <div class="field">
+              <label>Method</label>
+              <input formControlName="method" type="text" />
+            </div>
+            <div class="field">
+              <label>ID Token Type</label>
+              <input formControlName="idTokenType" type="text" />
+            </div>
+            <div class="field span-2">
+              <label>ID Token</label>
+              <input formControlName="idTokenValue" type="text" />
+            </div>
+            <div class="field">
+              <label>ID Tag</label>
+              <input formControlName="idTag" type="text" />
+            </div>
+            <div class="field">
+              <label>Purpose</label>
+              <input formControlName="purpose" type="text" />
+            </div>
+            <button class="btn primary" type="button" (click)="tap()">Tap / Authorize</button>
+          </form>
+          <form class="row" [formGroup]="pncStartForm">
+            <div class="field">
+              <label>Connector</label>
+              <input formControlName="connectorId" type="number" />
+            </div>
+            <div class="field span-2">
+              <label>EV VIN</label>
+              <input formControlName="vin" type="text" />
+            </div>
+            <div class="field">
+              <label>eMAID</label>
+              <input formControlName="emaid" type="text" />
+            </div>
+            <div class="field">
+              <label>Contract Cert</label>
+              <input formControlName="contractCertId" type="text" />
+            </div>
+            <div class="field span-2">
+              <label>PnC Token</label>
+              <input formControlName="pncIdTokenValue" type="text" />
+            </div>
+            <div class="field">
+              <label>Target Power</label>
+              <input formControlName="targetPowerW" type="number" />
+            </div>
+            <button class="btn ghost" type="button" (click)="startPnc()">Start PnC</button>
+          </form>
+          <form class="row" [formGroup]="pncStopForm">
+            <div class="field">
+              <label>Connector</label>
+              <input formControlName="connectorId" type="number" />
+            </div>
+            <div class="field span-2">
+              <label>Reason</label>
+              <input formControlName="reason" type="text" />
+            </div>
+            <div class="field">
+              <label>Request Stop</label>
+              <select formControlName="requestStopTransaction">
+                <option [ngValue]="true">Yes</option>
+                <option [ngValue]="false">No</option>
+              </select>
+            </div>
+            <button class="btn ghost" type="button" (click)="stopPnc()">Stop PnC</button>
+          </form>
+        </div>
+      </details>
+
+      <details class="accordion">
+        <summary>Charging & Meter Values</summary>
+        <div class="accordion-body">
+          <form class="row" [formGroup]="chargingStartForm">
+            <div class="field">
+              <label>Connector</label>
+              <input formControlName="connectorId" type="number" />
+            </div>
+            <div class="field">
+              <label>ID Tag</label>
+              <input formControlName="idTag" type="text" />
+            </div>
+            <div class="field">
+              <label>Authorization ID</label>
+              <input formControlName="authorizationId" type="text" />
+            </div>
+            <div class="field">
+              <label>Meter Start</label>
+              <input formControlName="meterStartWh" type="number" />
+            </div>
+            <div class="field">
+              <label>Target Power</label>
+              <input formControlName="targetPowerW" type="number" />
+            </div>
+            <button class="btn primary" type="button" (click)="startCharging()">Start Charging</button>
+          </form>
+          <form class="row" [formGroup]="chargingStopForm">
+            <div class="field">
+              <label>Connector</label>
+              <input formControlName="connectorId" type="number" />
+            </div>
+            <div class="field span-2">
+              <label>Transaction ID</label>
+              <input formControlName="transactionId" type="text" />
+            </div>
+            <div class="field">
+              <label>Meter Stop</label>
+              <input formControlName="meterStopWh" type="number" />
+            </div>
+            <button class="btn ghost" type="button" (click)="stopCharging()">Stop Charging</button>
+          </form>
+          <form class="row" [formGroup]="meterForm">
+            <div class="field">
+              <label>Connector</label>
+              <input formControlName="connectorId" type="number" />
+            </div>
+            <div class="field span-2">
+              <label>Transaction ID</label>
+              <input formControlName="transactionId" type="text" />
+            </div>
+            <div class="field">
+              <label>Energy Wh</label>
+              <input formControlName="energyWh" type="number" />
+            </div>
+            <div class="field">
+              <label>Power W</label>
+              <input formControlName="powerW" type="number" />
+            </div>
+            <div class="field">
+              <label>SoC %</label>
+              <input formControlName="socPercent" type="number" />
+            </div>
+            <div class="field span-2">
+              <label>Timestamp</label>
+              <input formControlName="timestamp" type="text" />
+            </div>
+            <button class="btn ghost" type="button" (click)="sendMeterValues()">Send Meter Values</button>
+          </form>
+        </div>
+      </details>
+
+      <details class="accordion">
+        <summary>Status & Faults</summary>
+        <div class="accordion-body">
+          <form class="row" [formGroup]="statusForm">
+            <div class="field">
+              <label>Connector</label>
+              <input formControlName="connectorId" type="number" />
+            </div>
+            <div class="field">
+              <label>Status</label>
+              <input formControlName="status" type="text" />
+            </div>
+            <div class="field">
+              <label>Error Code</label>
+              <input formControlName="errorCode" type="text" />
+            </div>
+            <button class="btn primary" type="button" (click)="setStatus()">Update Status</button>
+          </form>
+          <form class="row" [formGroup]="faultForm">
+            <div class="field">
+              <label>Connector</label>
+              <input formControlName="connectorId" type="number" />
+            </div>
+            <div class="field">
+              <label>Fault Type</label>
+              <input formControlName="type" type="text" />
+            </div>
+            <div class="field">
+              <label>Error Code</label>
+              <input formControlName="errorCode" type="text" />
+            </div>
+            <div class="field">
+              <label>Duration</label>
+              <input formControlName="durationSec" type="number" />
+            </div>
+            <div class="field">
+              <label>Disconnect</label>
+              <select formControlName="disconnect">
+                <option [ngValue]="false">No</option>
+                <option [ngValue]="true">Yes</option>
+              </select>
+            </div>
+            <button class="btn ghost" type="button" (click)="injectFault()">Inject</button>
+            <button class="btn ghost" type="button" (click)="clearFault()">Clear</button>
+          </form>
+        </div>
+      </details>
+
+      <details class="accordion">
+        <summary>Heartbeat & OCPP</summary>
+        <div class="accordion-body">
+          <form class="row" [formGroup]="heartbeatForm">
+            <div class="field">
+              <label>Heartbeat Interval</label>
+              <input formControlName="heartbeatIntervalSec" type="number" />
+            </div>
+            <button class="btn ghost" type="button" (click)="sendHeartbeat()">Send Heartbeat</button>
+            <button class="btn primary" type="button" (click)="updateHeartbeatInterval()">Update Interval</button>
+          </form>
+          <form class="row" [formGroup]="ocppSendForm">
+            <div class="field">
+              <label>Action</label>
+              <input formControlName="action" type="text" />
+            </div>
+            <div class="field span-3">
+              <label>Payload (JSON)</label>
+              <input formControlName="payload" type="text" />
+            </div>
+            <div class="field">
+              <label>Await Response</label>
+              <select formControlName="awaitResponse">
+                <option [ngValue]="true">Yes</option>
+                <option [ngValue]="false">No</option>
+              </select>
+            </div>
+            <div class="field">
+              <label>Timeout (ms)</label>
+              <input formControlName="timeoutMs" type="number" />
+            </div>
+            <button class="btn primary" type="button" (click)="sendOcpp()">Send OCPP</button>
+          </form>
+        </div>
+      </details>
+    </section>
+  </div>
+
+  <section class="panel full">
+    <header>
+      <div>
+        <h2>Events & Audit</h2>
+        <p>Streaming charger activity and command log.</p>
+      </div>
+      <div class="row actions">
+        <button class="btn primary" type="button" (click)="openEventStream()">Start Stream</button>
+        <button class="btn ghost" type="button" (click)="closeEventStream()">Stop Stream</button>
+      </div>
+    </header>
+    <div class="columns">
+      <div>
+        <h4>Event Stream</h4>
+        <div class="event-list">
+          <div class="event" *ngFor="let item of events()">
+            <div class="event-meta">
+              <span>{{ item.at }}</span>
+              <span>{{ item.type }}</span>
+            </div>
+            <pre>{{ item.payload }}</pre>
+          </div>
+        </div>
+      </div>
+      <div>
+        <h4>Action Log</h4>
+        <div class="event-list">
+          <div class="event" *ngFor="let entry of actionLog()">
+            <p>{{ entry }}</p>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+</div>
