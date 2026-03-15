@@ -89,6 +89,66 @@
   gap: 12px;
 }
 
+.base-url {
+  min-width: min(520px, 70vw);
+}
+
+.screen-nav {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+  gap: 10px;
+}
+
+.screen-btn {
+  border: 1px solid var(--surface-border);
+  border-radius: 14px;
+  background: var(--surface);
+  color: var(--ink);
+  text-align: left;
+  padding: 12px 14px;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease, transform 0.2s ease;
+}
+
+.screen-btn span {
+  font-weight: 700;
+}
+
+.screen-btn small {
+  color: var(--muted);
+  font-size: 0.78rem;
+}
+
+.screen-btn:hover {
+  transform: translateY(-1px);
+  border-color: rgba(10, 102, 194, 0.3);
+}
+
+.screen-btn.active {
+  border-color: rgba(10, 102, 194, 0.45);
+  box-shadow: 0 10px 24px rgba(10, 102, 194, 0.12);
+  background: linear-gradient(180deg, #f8fbff 0%, #f2f7ff 100%);
+}
+
+.screen {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.dashboard-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  gap: 24px;
+  position: relative;
+  z-index: 1;
+}
+
 .field {
   display: flex;
   flex-direction: column;
@@ -279,6 +339,7 @@ textarea:focus {
   display: flex;
   gap: 8px;
   justify-content: flex-end;
+  flex-wrap: wrap;
 }
 
 .row.filter-row {
@@ -363,6 +424,14 @@ textarea:focus {
   box-shadow: 0 6px 20px rgba(10, 102, 194, 0.08);
 }
 
+.table .row.actions {
+  justify-content: flex-start;
+}
+
+.table .row.actions .link {
+  font-size: 0.84rem;
+}
+
 .link {
   text-align: left;
   background: none;
@@ -440,6 +509,10 @@ pre {
     grid-template-columns: 1fr;
   }
 
+  .dashboard-grid {
+    grid-template-columns: 1fr;
+  }
+
   .topbar {
     position: relative;
     top: 0;
@@ -449,5 +522,15 @@ pre {
   .table-row {
     grid-template-columns: 1fr;
     gap: 6px;
+  }
+}
+
+@media (max-width: 760px) {
+  .app-shell {
+    padding: 18px 14px 28px;
+  }
+
+  .base-url {
+    min-width: 100%;
   }
 }

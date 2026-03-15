@@ -3,7 +3,7 @@ import { HttpErrorResponse } from '@angular/common/http';
 import { Component, DestroyRef, OnDestroy, OnInit, computed, inject, signal } from '@angular/core';
 import { FormArray, FormBuilder, FormControl, ReactiveFormsModule, Validators } from '@angular/forms';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
-import { Observable } from 'rxjs';
+import { merge, Observable } from 'rxjs';
 import { FleetApiService } from './core/api/fleet-api.service';
 import {
   ChargerConnector,
@@ -15,6 +15,9 @@ import {
   OcppVersion,
   StatsResponse
 } from './core/api/models';
+import { buildDefaultCsmsUrl } from './core/dev-env';
+
+type ScreenKey = 'dashboard' | 'fleet' | 'operations' | 'events';
 
 @Component({
   selector: 'app-root',
@@ -27,6 +30,7 @@ export class AppComponent implements OnInit, OnDestroy {
   private readonly fb = inject(FormBuilder);
   private readonly destroyRef = inject(DestroyRef);
   private eventSource: EventSource | null = null;
+  private lastSuggestedCreateCsmsUrl = buildDefaultCsmsUrl('OCPP16J', 'CP_000001', 'sim-000001');
 
   readonly baseUrlControl = new FormControl(this.api.baseUrl(), {
     nonNullable: true,
@@ -38,11 +42,18 @@ export class AppComponent implements OnInit, OnDestroy {
   readonly selectedCharger = signal<ChargerDetails | null>(null);
   readonly selectedConnection = signal<ConnectionDetails | null>(null);
   readonly selectedChargerId = computed(() => this.selectedCharger()?.chargerId ?? '');
+  readonly activeScreen = signal<ScreenKey>('dashboard');
   readonly events = signal<Array<{ at: string; type: string; payload: string }>>([]);
   readonly actionLog = signal<string[]>([]);
   readonly isLoading = signal(false);
   readonly error = signal<string | null>(null);
   readonly eventStreamConnected = signal(false);
+  readonly screens: Array<{ key: ScreenKey; label: string; description: string }> = [
+    { key: 'dashboard', label: 'Dashboard', description: 'Fleet health and live status' },
+    { key: 'fleet', label: 'Fleet', description: 'Provision and inspect chargers' },
+    { key: 'operations', label: 'Operations', description: 'Run charger actions' },
+    { key: 'events', label: 'Events', description: 'Observe simulator event stream' }
+  ];
 
   readonly listFilters = this.fb.group({
     status: [''],
@@ -57,7 +68,7 @@ export class AppComponent implements OnInit, OnDestroy {
     ocppVersion: ['OCPP16J', Validators.required],
     transport: this.fb.group({
       role: ['CP'],
-      csmsUrl: ['wss://csms.example.com/ocpp', Validators.required],
+      csmsUrl: [this.lastSuggestedCreateCsmsUrl, Validators.required],
       tls: this.fb.group({
         enabled: [true],
         skipVerify: [false]
@@ -103,7 +114,7 @@ export class AppComponent implements OnInit, OnDestroy {
   });
 
   readonly connectionForm = this.fb.group({
-    csmsUrl: ['wss://csms.example.com/ocpp'],
+    csmsUrl: [this.lastSuggestedCreateCsmsUrl],
     reconnectEnabled: [true],
     minBackoffMs: [200],
     maxBackoffMs: [5000]
@@ -193,12 +204,33 @@ export class AppComponent implements OnInit, OnDestroy {
   }
 
   ngOnInit() {
+    this.syncCreateCsmsUrl();
+    merge(
+      this.createForm.controls.chargerId.valueChanges,
+      this.createForm.controls.ocppIdentity.valueChanges,
+      this.createForm.controls.ocppVersion.valueChanges
+    )
+      .pipe(takeUntilDestroyed(this.destroyRef))
+      .subscribe(() => this.syncCreateCsmsUrl());
+
     this.fetchStats();
     this.listChargerFleet();
   }
 
   ngOnDestroy() {
     this.closeEventStream();
+  }
+
+  setScreen(screen: ScreenKey) {
+    this.activeScreen.set(screen);
+  }
+
+  trackByIndex(index: number) {
+    return index;
+  }
+
+  trackByChargerId(_: number, charger: ChargerListItem) {
+    return charger.chargerId;
   }
 
   applyBaseUrl() {
@@ -237,6 +269,7 @@ export class AppComponent implements OnInit, OnDestroy {
     this.runAction('Charger loaded', this.api.getCharger(chargerId), (charger) => {
       this.selectedCharger.set(charger);
       this.seedConfigForm(charger);
+      this.seedConnectionForm(charger);
       this.fetchConnection(chargerId);
     });
   }
@@ -582,6 +615,18 @@ export class AppComponent implements OnInit, OnDestroy {
     });
   }
 
+  private seedConnectionForm(charger: ChargerDetails) {
+    const csmsUrl =
+      charger.transport?.csmsUrl ||
+      buildDefaultCsmsUrl(charger.ocppVersion, charger.ocppIdentity ?? '', charger.chargerId);
+    this.connectionForm.patchValue({
+      csmsUrl,
+      reconnectEnabled: true,
+      minBackoffMs: 200,
+      maxBackoffMs: 5000
+    });
+  }
+
   private buildCreatePayload(): ChargerCreateRequest {
     const raw = this.createForm.getRawValue();
     const connectors = (raw.connectors ?? []).map((connector) => ({
@@ -723,6 +768,17 @@ export class AppComponent implements OnInit, OnDestroy {
   private toNumber(value: unknown, fallback: number) {
     const parsed = Number(value);
     return Number.isFinite(parsed) ? parsed : fallback;
+  }
+
+  private syncCreateCsmsUrl() {
+    const control = this.createForm.controls.transport.controls.csmsUrl;
+    const raw = this.createForm.getRawValue();
+    const nextSuggested = buildDefaultCsmsUrl(raw.ocppVersion, raw.ocppIdentity ?? '', raw.chargerId ?? '');
+    const current = control.value?.trim() ?? '';
+    if (!current || current === this.lastSuggestedCreateCsmsUrl) {
+      control.patchValue(nextSuggested, { emitEvent: false });
+    }
+    this.lastSuggestedCreateCsmsUrl = nextSuggested;
   }
 
   private asOcppVersion(value: unknown): OcppVersion {
