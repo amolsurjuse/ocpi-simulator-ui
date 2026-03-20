@@ -27,6 +27,8 @@ export interface ChargerConnector {
   connectorId: number;
   type: string;
   maxKw: number;
+  status?: ConnectorStatus;
+  errorCode?: string;
 }
 
 export interface ChargerSocConfig {
@@ -104,11 +106,22 @@ export interface ChargerDetails {
   runtime?: {
     lastHeartbeatAt?: string;
     lastMessageAt?: string;
-    activeTransactions?: string[];
+    activeTransactions?: ActiveTransaction[];
   };
   transport?: TransportConfig;
   connectors?: ChargerConnector[];
   tags?: Record<string, string>;
+}
+
+export interface ActiveTransaction {
+  transactionId: string;
+  connectorId: number;
+  status?: string;
+  meterStartWh?: number;
+  meterStopWh?: number;
+  startedAt?: string;
+  authorizationId?: string;
+  idTag?: string;
 }
 
 export interface ConnectionDetails {

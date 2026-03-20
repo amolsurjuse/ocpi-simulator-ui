@@ -6,6 +6,7 @@ import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { merge, Observable } from 'rxjs';
 import { FleetApiService } from './core/api/fleet-api.service';
 import {
+  ActiveTransaction,
   ChargerConnector,
   ChargerCreateRequest,
   ChargerDetails,
@@ -17,7 +18,8 @@ import {
 } from './core/api/models';
 import { buildDefaultCsmsUrl } from './core/dev-env';
 
-type ScreenKey = 'dashboard' | 'fleet' | 'operations' | 'events';
+type ScreenKey = 'dashboard' | 'fleet' | 'provision' | 'operations' | 'events';
+type ConfirmationAction = 'startCharging' | 'stopCharging';
 
 @Component({
   selector: 'app-root',
@@ -48,10 +50,10 @@ export class AppComponent implements OnInit, OnDestroy {
   readonly isLoading = signal(false);
   readonly error = signal<string | null>(null);
   readonly eventStreamConnected = signal(false);
+  readonly pendingConfirmation = signal<{ action: ConfirmationAction; title: string; message: string } | null>(null);
   readonly screens: Array<{ key: ScreenKey; label: string; description: string }> = [
     { key: 'dashboard', label: 'Dashboard', description: 'Fleet health and live status' },
-    { key: 'fleet', label: 'Fleet', description: 'Provision and inspect chargers' },
-    { key: 'operations', label: 'Operations', description: 'Run charger actions' },
+    { key: 'fleet', label: 'Fleet', description: 'Inspect chargers and connector state' },
     { key: 'events', label: 'Events', description: 'Observe simulator event stream' }
   ];
 
@@ -233,6 +235,10 @@ export class AppComponent implements OnInit, OnDestroy {
     return charger.chargerId;
   }
 
+  trackByConnectorId(_: number, connector: ChargerConnector) {
+    return connector.connectorId;
+  }
+
   applyBaseUrl() {
     if (this.baseUrlControl.invalid) {
       return;
@@ -293,6 +299,8 @@ export class AppComponent implements OnInit, OnDestroy {
     this.runAction('Charger created', this.api.createCharger(payload), () => {
       this.bumpDefaultChargerId();
       this.listChargerFleet();
+      this.setScreen('fleet');
+      this.selectCharger(payload.chargerId);
     });
   }
 
@@ -342,6 +350,7 @@ export class AppComponent implements OnInit, OnDestroy {
     };
     this.runAction('Connect requested', this.api.connectCharger(chargerId, payload), () => {
       this.fetchConnection(chargerId);
+      this.refreshSelectedCharger(chargerId);
     });
   }
 
@@ -357,6 +366,7 @@ export class AppComponent implements OnInit, OnDestroy {
     };
     this.runAction('Disconnect requested', this.api.disconnectCharger(chargerId, payload), () => {
       this.fetchConnection(chargerId);
+      this.refreshSelectedCharger(chargerId);
     });
   }
 
@@ -375,7 +385,9 @@ export class AppComponent implements OnInit, OnDestroy {
       idTag: raw.idTag ?? '',
       purpose: raw.purpose ?? ''
     };
-    this.runAction('Tap sent', this.api.tap(chargerId, Number(raw.connectorId), payload));
+    this.runAction('Tap sent', this.api.tap(chargerId, Number(raw.connectorId), payload), () => {
+      this.refreshSelectedCharger(chargerId);
+    });
   }
 
   startPnc() {
@@ -402,7 +414,9 @@ export class AppComponent implements OnInit, OnDestroy {
         targetPowerW: this.toNumber(raw.targetPowerW, 11000)
       }
     };
-    this.runAction('PnC start queued', this.api.pncStart(chargerId, Number(raw.connectorId), payload));
+    this.runAction('PnC start queued', this.api.pncStart(chargerId, Number(raw.connectorId), payload), () => {
+      this.refreshSelectedCharger(chargerId);
+    });
   }
 
   stopPnc() {
@@ -415,7 +429,9 @@ export class AppComponent implements OnInit, OnDestroy {
       reason: raw.reason,
       requestStopTransaction: raw.requestStopTransaction
     };
-    this.runAction('PnC stop queued', this.api.pncStop(chargerId, Number(raw.connectorId), payload));
+    this.runAction('PnC stop queued', this.api.pncStop(chargerId, Number(raw.connectorId), payload), () => {
+      this.refreshSelectedCharger(chargerId);
+    });
   }
 
   startCharging() {
@@ -435,7 +451,10 @@ export class AppComponent implements OnInit, OnDestroy {
     };
     this.runAction(
       'Charging started',
-      this.api.startCharging(chargerId, Number(raw.connectorId), payload)
+      this.api.startCharging(chargerId, Number(raw.connectorId), payload),
+      () => {
+        this.refreshSelectedCharger(chargerId);
+      }
     );
   }
 
@@ -450,7 +469,9 @@ export class AppComponent implements OnInit, OnDestroy {
       reason: raw.reason ?? '',
       meterStopWh: this.toNumber(raw.meterStopWh, 1209500)
     };
-    this.runAction('Charging stopped', this.api.stopCharging(chargerId, Number(raw.connectorId), payload));
+    this.runAction('Charging stopped', this.api.stopCharging(chargerId, Number(raw.connectorId), payload), () => {
+      this.refreshSelectedCharger(chargerId);
+    });
   }
 
   sendMeterValues() {
@@ -470,7 +491,10 @@ export class AppComponent implements OnInit, OnDestroy {
     };
     this.runAction(
       'Meter values queued',
-      this.api.sendMeterValues(chargerId, Number(raw.connectorId), payload)
+      this.api.sendMeterValues(chargerId, Number(raw.connectorId), payload),
+      () => {
+        this.refreshSelectedCharger(chargerId);
+      }
     );
   }
 
@@ -484,7 +508,9 @@ export class AppComponent implements OnInit, OnDestroy {
       status: this.asConnectorStatus(raw.status),
       errorCode: raw.errorCode ?? 'NoError'
     };
-    this.runAction('Status updated', this.api.setStatus(chargerId, Number(raw.connectorId), payload));
+    this.runAction('Status updated', this.api.setStatus(chargerId, Number(raw.connectorId), payload), () => {
+      this.refreshSelectedCharger(chargerId);
+    });
   }
 
   injectFault() {
@@ -501,7 +527,10 @@ export class AppComponent implements OnInit, OnDestroy {
     };
     this.runAction(
       'Fault injected',
-      this.api.injectFault(chargerId, Number(raw.connectorId), payload)
+      this.api.injectFault(chargerId, Number(raw.connectorId), payload),
+      () => {
+        this.refreshSelectedCharger(chargerId);
+      }
     );
   }
 
@@ -514,7 +543,9 @@ export class AppComponent implements OnInit, OnDestroy {
     const payload = {
       type: raw.type ?? ''
     };
-    this.runAction('Fault cleared', this.api.clearFault(chargerId, Number(raw.connectorId), payload));
+    this.runAction('Fault cleared', this.api.clearFault(chargerId, Number(raw.connectorId), payload), () => {
+      this.refreshSelectedCharger(chargerId);
+    });
   }
 
   sendHeartbeat() {
@@ -522,7 +553,9 @@ export class AppComponent implements OnInit, OnDestroy {
     if (!chargerId) {
       return;
     }
-    this.runAction('Heartbeat queued', this.api.sendHeartbeat(chargerId));
+    this.runAction('Heartbeat queued', this.api.sendHeartbeat(chargerId), () => {
+      this.refreshSelectedCharger(chargerId);
+    });
   }
 
   updateHeartbeatInterval() {
@@ -534,7 +567,9 @@ export class AppComponent implements OnInit, OnDestroy {
     const payload = {
       heartbeatIntervalSec: this.toNumber(raw.heartbeatIntervalSec, 20)
     };
-    this.runAction('Heartbeat interval updated', this.api.setHeartbeatInterval(chargerId, payload));
+    this.runAction('Heartbeat interval updated', this.api.setHeartbeatInterval(chargerId, payload), () => {
+      this.refreshSelectedCharger(chargerId);
+    });
   }
 
   sendOcpp() {
@@ -551,7 +586,10 @@ export class AppComponent implements OnInit, OnDestroy {
         payload,
         awaitResponse: raw.awaitResponse ?? true,
         timeoutMs: this.toNumber(raw.timeoutMs, 5000)
-      })
+      }),
+      () => {
+        this.refreshSelectedCharger(chargerId);
+      }
     );
   }
 
@@ -594,6 +632,174 @@ export class AppComponent implements OnInit, OnDestroy {
     }
   }
 
+  requestStartCharging() {
+    if (!this.canStartCharging()) {
+      return;
+    }
+    this.pendingConfirmation.set({
+      action: 'startCharging',
+      title: 'Start charging session',
+      message: `Start charging on connector #${this.focusedConnectorId()}?`
+    });
+  }
+
+  requestStopCharging() {
+    if (!this.canStopCharging()) {
+      return;
+    }
+    this.pendingConfirmation.set({
+      action: 'stopCharging',
+      title: 'Stop charging session',
+      message: `Stop charging on connector #${this.focusedConnectorId()}?`
+    });
+  }
+
+  closeConfirmation() {
+    this.pendingConfirmation.set(null);
+  }
+
+  confirmPendingAction() {
+    const pending = this.pendingConfirmation();
+    if (!pending) {
+      return;
+    }
+    this.pendingConfirmation.set(null);
+    if (pending.action === 'startCharging') {
+      this.startCharging();
+      return;
+    }
+    this.stopCharging();
+  }
+
+  refreshSelected() {
+    this.refreshSelectedCharger();
+    this.fetchConnection();
+  }
+
+  getActiveTransactionCount(charger: ChargerDetails | null | undefined) {
+    return charger?.runtime?.activeTransactions?.length ?? 0;
+  }
+
+  getConnectorTransaction(connectorId: number): ActiveTransaction | null {
+    return this.selectedCharger()?.runtime?.activeTransactions?.find((tx) => tx.connectorId === connectorId) ?? null;
+  }
+
+  focusedConnectorId() {
+    return this.toNumber(this.tapForm.get('connectorId')?.value, 1);
+  }
+
+  focusedConnector() {
+    return this.selectedCharger()?.connectors?.find((connector) => connector.connectorId === this.focusedConnectorId()) ?? null;
+  }
+
+  focusedConnectorStatus() {
+    return this.focusedConnector()?.status;
+  }
+
+  isChargerConnected() {
+    const state = this.selectedConnection()?.connectionState || this.selectedCharger()?.connectionState;
+    return state === 'CONNECTED';
+  }
+
+  isChargerConnecting() {
+    const state = this.selectedConnection()?.connectionState || this.selectedCharger()?.connectionState;
+    return state === 'CONNECTING';
+  }
+
+  hasFocusedTransaction() {
+    return Boolean(this.getConnectorTransaction(this.focusedConnectorId()));
+  }
+
+  canConnect() {
+    return Boolean(this.selectedCharger()) && !this.isChargerConnected() && !this.isChargerConnecting() && !this.isLoading();
+  }
+
+  shouldHighlightDisconnect() {
+    return this.isChargerConnected() || this.isChargerConnecting();
+  }
+
+  canDisconnect() {
+    return Boolean(this.selectedCharger()) && !this.isLoading() && (this.isChargerConnected() || this.isChargerConnecting());
+  }
+
+  canTap() {
+    return this.isChargerConnected() && !this.hasFocusedTransaction() && !this.isLoading();
+  }
+
+  canStartPnc() {
+    return this.isChargerConnected() && !this.hasFocusedTransaction() && !this.isLoading();
+  }
+
+  canStopPnc() {
+    return this.isChargerConnected() && this.hasFocusedTransaction() && !this.isLoading();
+  }
+
+  canStartCharging() {
+    const status = this.focusedConnectorStatus();
+    return (
+      this.isChargerConnected() &&
+      !this.hasFocusedTransaction() &&
+      !this.isLoading() &&
+      (status === 'Available' || status === 'Preparing' || status === 'Finishing' || !status)
+    );
+  }
+
+  shouldHighlightStartCharging() {
+    return this.canStartCharging();
+  }
+
+  canStopCharging() {
+    return this.isChargerConnected() && this.hasFocusedTransaction() && !this.isLoading();
+  }
+
+  shouldHighlightStopCharging() {
+    return this.canStopCharging();
+  }
+
+  canSendMeterValues() {
+    return this.isChargerConnected() && this.hasFocusedTransaction() && !this.isLoading();
+  }
+
+  canSetStatus() {
+    return this.isChargerConnected() && !this.isLoading();
+  }
+
+  canInjectFault() {
+    return this.isChargerConnected() && !this.isLoading();
+  }
+
+  canClearFault() {
+    return this.isChargerConnected() && !this.isLoading() && Boolean(this.focusedConnector()?.errorCode && this.focusedConnector()?.errorCode !== 'NoError');
+  }
+
+  canSendHeartbeat() {
+    return this.isChargerConnected() && !this.isLoading();
+  }
+
+  canSendOcpp() {
+    return this.isChargerConnected() && !this.isLoading();
+  }
+
+  setConnectorContext(connectorId: number) {
+    const transaction = this.getConnectorTransaction(connectorId);
+    this.tapForm.patchValue({ connectorId });
+    this.pncStartForm.patchValue({ connectorId });
+    this.pncStopForm.patchValue({ connectorId });
+    this.chargingStartForm.patchValue({ connectorId });
+    this.chargingStopForm.patchValue({ connectorId, transactionId: transaction?.transactionId ?? this.chargingStopForm.get('transactionId')?.value });
+    this.meterForm.patchValue({ connectorId, transactionId: transaction?.transactionId ?? this.meterForm.get('transactionId')?.value });
+    this.statusForm.patchValue({ connectorId });
+    this.faultForm.patchValue({ connectorId });
+  }
+
+  isConnectorHealthy(status?: ConnectorStatus) {
+    return status === 'Available' || status === 'Charging' || status === 'Preparing' || status === 'Finishing';
+  }
+
+  isConnectorWarning(status?: ConnectorStatus) {
+    return status === 'Unavailable' || status === 'SuspendedEV' || status === 'SuspendedEVSE';
+  }
+
   private buildConnector() {
     return this.fb.group({
       connectorId: [1, Validators.required],
@@ -625,6 +831,23 @@ export class AppComponent implements OnInit, OnDestroy {
       minBackoffMs: 200,
       maxBackoffMs: 5000
     });
+  }
+
+  private refreshSelectedCharger(chargerId = this.selectedChargerId()) {
+    if (!chargerId) {
+      return;
+    }
+    this.api
+      .getCharger(chargerId)
+      .pipe(takeUntilDestroyed(this.destroyRef))
+      .subscribe({
+        next: (charger) => {
+          this.selectedCharger.set(charger);
+          this.seedConfigForm(charger);
+          this.seedConnectionForm(charger);
+          this.setConnectorContext(this.focusedConnectorId());
+        }
+      });
   }
 
   private buildCreatePayload(): ChargerCreateRequest {
